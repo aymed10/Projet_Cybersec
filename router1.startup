@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Configuration des interfaces réseau
+ifconfig eth0 192.168.0.1 netmask 255.255.255.0 up  # Interface LAN (vers les clients)
+ifconfig eth1 up                                   # Interface externe pour Internet
+
+# Réinitialiser les règles iptables
+iptables -F
+iptables -t nat -F
+iptables -X
+
+iptables -P INPUT ACCEPT
+iptables -P FORWARD ACCEPT
+iptables -P OUTPUT ACCEPT
+
+# Mettre en place le NAT pour l'accès à Internet via eth1
+iptables -t nat -A POSTROUTING -o eth1 -j MASQUERADE
+
+# Exclure client3 (192.168.0.4) des redirections HTTP et HTTPS
+iptables -t nat -A PREROUTING -p tcp --dport 80 -s 192.168.0.4 -j RETURN
+iptables -t nat -A PREROUTING -p tcp --dport 443 -s 192.168.0.4 -j RETURN
+
+# Rediriger le trafic HTTP et HTTPS pour les autres clients vers Squid
+iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 3128
+iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 3128
+
+# Ajouter le DNS pour la résolution de noms
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+
+# Log pour confirmation
+echo "Configuration complète du routeur avec NAT et redirection Squid."
+

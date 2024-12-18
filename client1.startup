@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# Configuration de l'adresse IP sur le LAN
+ifconfig eth0 192.168.0.2 netmask 255.255.255.0 up
+
+# Route par défaut via le firewall
+route add default gw 192.168.0.1
+
+# Ajouter le DNS
+echo "nameserver 8.8.8.8" | tee -a /etc/resolv.conf
