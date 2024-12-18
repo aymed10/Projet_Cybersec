@@ -1,139 +1,138 @@
-#!/usr/bin/env python3
+import socket
+import requests
+from bs4 import BeautifulSoup
+import re
+import csv
+from urllib.parse import urlparse
+from datetime import datetime
 
-import os
-import subprocess
-import shutil
-
-# Fonction pour exécuter des commandes shell
-def run_command(command):
-    print(f"[INFO] Exécution : {command}")
-    result = subprocess.run(command, shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"[ERREUR] {result.stderr}")
-    else:
-        print(result.stdout)
-
-# Installer Squid et Apache pour la redirection
-def install_packages():
-    print("[INFO] Installation des paquets nécessaires...")
-    run_command("apt-get update")
-    run_command("apt-get install -y squid apache2")
-
-# Configurer le proxy Squid
-def configure_squid(banned_sites_csv, banned_words_csv):
-    print("[INFO] Configuration de Squid...")
-    banned_sites = "/etc/squid/banned_sites.txt"
-    banned_words = "/etc/squid/banned_words.txt"
-    squid_conf = "/etc/squid/squid.conf"
-
-    # Convertir les fichiers CSV en fichiers plats
-    shutil.copy(banned_sites_csv, banned_sites)
-    shutil.copy(banned_words_csv, banned_words)
-
-    # Configuration de Squid
-    squid_config_content = f"""
-    # Bloquer les sites spécifiques (HTTP et HTTPS via SNI)
-    acl banned_sites dstdomain "{banned_sites}"
-    http_access deny banned_sites
-
-    # Bloquer les mots-clés spécifiques
-    acl banned_keywords url_regex "{banned_words}"
-    http_access deny banned_keywords
-
-    # Redirection vers une page HTML en cas de blocage
-    deny_info http://192.168.0.1/blocked.html banned_sites
-    deny_info http://192.168.0.1/blocked.html banned_keywords
-
-    # Autoriser le reste
-    http_access allow all
-    """
-
-    # Écrire dans squid.conf
-    with open(squid_conf, "w") as f:
-        f.write(squid_config_content)
-
-    run_command("service squid restart")
-    print("[INFO] Squid configuré avec succès.")
-
-# Configurer Apache pour la page de redirection
-def configure_apache():
-    print("[INFO] Configuration du serveur Apache...")
-
-    # Chemin de la page HTML de redirection
-    html_path = "/var/www/html/blocked.html"
-
-    # Contenu HTML pour la page bloquée
-    blocked_page_content = """
-    <html>
-    <head>
-        <title>Accès Bloqué</title>
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                background-color: #f8d7da;
-                color: #721c24;
-                margin: 0;
-                padding: 0;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                height: 100vh;
-                text-align: center;
-            }
-            h1 {
-                font-size: 2.5em;
-            }
-            p {
-                font-size: 1.2em;
-            }
-        </style>
-    </head>
-    <body>
-        <div>
-            <h1>Accès à cette page bloqué</h1>
-            <p>Ce site est interdit par l'administrateur réseau.</p>
-            <p>Pour plus d'informations, contactez le support IT.</p>
-        </div>
-    </body>
-    </html>
-    """
-
-    # Créer le fichier blocked.html
+# Charger les mots-clés depuis un fichier CSV
+def load_keywords_from_csv(filename):
+    """ Charger les mots-clés depuis un fichier CSV """
+    keywords = []
     try:
-        with open(html_path, "w") as f:
-            f.write(blocked_page_content)
-        print(f"[INFO] Page HTML créée : {html_path}")
+        with open(filename, 'r', encoding='utf-8') as csvfile:
+            reader = csv.reader(csvfile)
+            for row in reader:
+                keywords.extend(row)
     except Exception as e:
-        print(f"[ERREUR] Impossible de créer la page HTML : {e}")
-        return
+        print(f"[ERREUR] Chargement des mots-clés : {e}")
+    return keywords
 
-    # Redémarrer le service Apache pour s'assurer que la page est servie
-    run_command("service apache2 restart")
-    print("[INFO] Serveur Apache configuré avec succès.")
+# Charger les URLs bloquées depuis un fichier CSV
+def load_blocked_urls_from_csv(filename):
+    """ Charger les URLs bloquées depuis un fichier CSV """
+    blocked_urls = []
+    try:
+        with open(filename, 'r', encoding='utf-8') as csvfile:
+            reader = csv.reader(csvfile)
+            for row in reader:
+                blocked_urls.append(row[0].strip())
+    except Exception as e:
+        print(f"[ERREUR] Chargement des URLs : {e}")
+    return blocked_urls
 
-def main():
-    print("[INFO] Début de la configuration du filtre...")
-    # Déterminer le dossier où se trouve ce script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    banned_sites_csv = os.path.join(script_dir, "banned_sites.csv")
-    banned_words_csv = os.path.join(script_dir, "banned_words.csv")
+# Extraire l'URL de la requête HTTP
+def extract_url_from_request(request_data):
+    """ Extraire l'URL à partir des données de requête HTTP """
+    match = re.search(r"GET (.*?) HTTP", request_data)
+    if match:
+        url = match.group(1).strip()
+        if url.startswith("/"):
+            host_match = re.search(r"Host: ([^\r\n]+)", request_data)
+            if host_match:
+                domain = host_match.group(1).strip()
+                url = f"http://{domain}{url}"
+        return url
+    return None
 
-    # Vérifier que les fichiers CSV existent
-    if not os.path.exists(banned_sites_csv) or not os.path.exists(banned_words_csv):
-        print("[ERREUR] Les fichiers CSV des sites et mots interdits sont introuvables.")
-        return
+# Vérifier la présence de mots-clés sur la page
+def check_for_keywords(url, keywords):
+    """ Vérifie si des mots-clés apparaissent sur la page web """
+    try:
+        response = requests.get(url, timeout=5)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        for keyword in keywords:
+            if keyword.lower() in soup.get_text().lower():
+                print(f"[BLOQUÉ] Mot-clé détecté : '{keyword}' sur {url}")
+                return True  # Site bloqué
+        return False  # Site autorisé
+    except Exception as e:
+        print(f"[ERREUR] Impossible d'accéder à {url} : {e}")
+        return True  # Bloquer en cas d'erreur d'accès
 
-    # Installer les paquets nécessaires
-    install_packages()
+# Gérer les connexions et appliquer les filtres
+def handle_connection(conn, keywords, blocked_urls, allowed_ips):
+    """ Filtre les requêtes HTTP en fonction des règles définies """
+    try:
+        client_ip, client_port = conn.getpeername()
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{timestamp}] Connexion de {client_ip}:{client_port}")
 
-    # Configurer Squid
-    configure_squid(banned_sites_csv, banned_words_csv)
+        data = conn.recv(1024).decode(errors='ignore')
+        if not data:
+            print(f"[AVERTISSEMENT] Aucune donnée reçue de {client_ip}")
+            return
 
-    # Configurer Apache pour la redirection
-    configure_apache()
+        url = extract_url_from_request(data)
+        if not url:
+            print(f"[AVERTISSEMENT] URL non détectée pour {client_ip}")
+            conn.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+            return
 
-    print("[INFO] Configuration complète. Squid et Apache sont prêts !")
+        print(f"[INFO] Requête URL : {url}")
 
+        # Vérifier si l'IP est autorisée (accès sans restriction)
+        if client_ip in allowed_ips:
+            print(f"[AUTORISÉ] IP autorisée : {client_ip}")
+            response = requests.get(url)
+            conn.sendall(b"HTTP/1.1 200 OK\r\n\r\n" + response.content)
+            return
+
+        # Vérifier les URLs bloquées
+        if any(blocked_url in url for blocked_url in blocked_urls):
+            print(f"[BLOQUÉ] URL interdite : {url}")
+            conn.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+            return
+
+        # Vérifier les mots-clés
+        if check_for_keywords(url, keywords):
+            print(f"[BLOQUÉ] Contenu bloqué : {url}")
+            conn.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+            return
+
+        # Si tout est autorisé, transmettre le contenu de la page
+        print(f"[AUTORISÉ] Accès autorisé à : {url}")
+        response = requests.get(url)
+        conn.sendall(b"HTTP/1.1 200 OK\r\n\r\n" + response.content)
+
+    except Exception as e:
+        print(f"[ERREUR] Problème lors du traitement : {e}")
+    finally:
+        conn.close()
+
+# Démarrer le serveur pour intercepter les connexions HTTP
+def start_server(keywords, blocked_urls, allowed_ips):
+    """ Démarre le serveur de filtrage HTTP """
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(('0.0.0.0', 9999))
+    server.listen(5)
+    print("[INFO] Serveur de filtrage en écoute sur le port 9999...")
+
+    while True:
+        conn, addr = server.accept()
+        handle_connection(conn, keywords, blocked_urls, allowed_ips)
+
+# Fonction principale
 if __name__ == "__main__":
-    main()
+    # Charger les fichiers
+    keywords = load_keywords_from_csv("banned_words.csv")
+    blocked_urls = load_blocked_urls_from_csv("banned_sites.csv")
+    allowed_ips = ["192.168.0.3", "192.168.0.4"]
+
+    if keywords and blocked_urls:
+        print("[INFO] Mots-clés et URLs chargés avec succès.")
+        start_server(keywords, blocked_urls, allowed_ips)
+    else:
+        print("[ERREUR] Aucun mot-clé ou URL bloquée trouvée. Vérifiez vos fichiers CSV.")
 
