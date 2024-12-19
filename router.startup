@@ -17,8 +17,8 @@ iptables -P OUTPUT ACCEPT
 iptables -t nat -A POSTROUTING -o eth1 -j MASQUERADE
 
 # Exclure client3 (192.168.0.4) des redirections HTTP et HTTPS
-iptables -t nat -A PREROUTING -p tcp --dport 80 -s 192.168.0.4 -j RETURN
-iptables -t nat -A PREROUTING -p tcp --dport 443 -s 192.168.0.4 -j RETURN
+#iptables -t nat -A PREROUTING -p tcp --dport 80 -s 192.168.0.4 -j RETURN
+#iptables -t nat -A PREROUTING -p tcp --dport 443 -s 192.168.0.4 -j RETURN
 
 # Rediriger le trafic HTTP et HTTPS pour les autres clients vers Squid
 iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 9999

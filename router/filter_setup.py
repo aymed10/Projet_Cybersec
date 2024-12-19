@@ -128,7 +128,7 @@ if __name__ == "__main__":
     # Charger les fichiers
     keywords = load_keywords_from_csv("banned_words.csv")
     blocked_urls = load_blocked_urls_from_csv("banned_sites.csv")
-    allowed_ips = ["192.168.0.3", "192.168.0.4"]
+    allowed_ips = ["192.168.0.3","192.168.0.4"]
 
     if keywords and blocked_urls:
         print("[INFO] Mots-clés et URLs chargés avec succès.")
