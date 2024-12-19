@@ -22,7 +22,7 @@ iptables -t nat -A POSTROUTING -o eth1 -j MASQUERADE
 
 # Rediriger le trafic HTTP et HTTPS pour les autres clients vers Squid
 iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 9999
-iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 3128
+iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 9999
 
 # Ajouter le DNS pour la résolution de noms
 echo "nameserver 8.8.8.8" > /etc/resolv.conf
