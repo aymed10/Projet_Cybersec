@@ -31,9 +31,42 @@ echo "nameserver 8.8.8.8" > /etc/resolv.conf
 echo "Configuration complète du routeur avec NAT et redirection Squid."
 
 #installer les dependances
-apt-get update
-apt-get install -y python3-pip
-pip3 install requests beautifulsoup4
-apt-get install -y squid
-apt-get install -y apache2
+echo "Mise à jour des packages..."
+apt-get update || { echo "apt-get update failed"; exit 1; }
+
+echo "Installation des paquets nécessaires..."
+apt-get install -y python3-pip squid apache2 iproute2|| { echo "Installation failed"; exit 1; }
+
+# Vérifier et installer pip3 packages
+if ! command -v pip3 &> /dev/null; then
+  echo "pip3 non trouvé, installation en cours..."
+  apt-get install -y python3-pip || { echo "pip3 install failed"; exit 1; }
+fi
+
+echo "Installation des paquets Python..."
+pip3 install requests beautifulsoup4 pymongo || { echo "Pip install failed"; exit 1; }
+# apt-get update
+
 echo "Dépendances installées."
+
+# -----------------------------------------------------
+#           Limit Bandwidth to 100 Mbps               |
+# -----------------------------------------------------
+
+# Set the default qdisc to HTB for bandwidth control
+tc qdisc add dev eth1 root handle 1: htb default 30
+
+# Create a class that limits bandwidth to 100 Mbps
+tc class add dev eth1 parent 1: classid 1:1 htb rate 100mbit
+
+# Apply the rate limit of 100 Mbps for HTTP/HTTPS traffic
+tc filter add dev eth1 parent 1: protocol ip prio 1 u32 match ip dport 80 0xffff flowid 1:1
+tc filter add dev eth1 parent 1: protocol ip prio 1 u32 match ip dport 443 0xffff flowid 1:1
+
+
+# -----------------------------------------------------
+#  Set Up Delay for authorized websites (Below 10ms)  |
+# -----------------------------------------------------
+
+# Add a delay of 10 ms to all outgoing traffic
+tc qdisc add dev eth1 parent 1:1 handle 10: netem delay 10ms

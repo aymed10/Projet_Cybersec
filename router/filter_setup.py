@@ -5,10 +5,25 @@ import re
 import csv
 from urllib.parse import urlparse
 from datetime import datetime
+from pymongo import MongoClient
 
-# Charger les mots-clés depuis un fichier CSV
+# Initialize MongoDB client
+mongo_client = MongoClient("mongodb://192.168.118.75:27017/")
+db = mongo_client["monitoring_db"]
+connections_collection = db["connections"]
+
+def log_to_mongo(log_entry):
+    print(f"[DEBUG] Log Entry: {log_entry}")
+    """Log connection details to MongoDB."""
+    try:
+        connections_collection.insert_one(log_entry)
+        print("[INFO] Log entry saved to MongoDB.")
+    except Exception as e:
+        print(f"[ERROR] Failed to save log: {e}")
+
+# Load keywords and blocked URLs from CSV files
 def load_keywords_from_csv(filename):
-    """ Charger les mots-clés depuis un fichier CSV """
+    """ Load keywords and blocked URLs from CSV files """
     keywords = []
     try:
         with open(filename, 'r', encoding='utf-8') as csvfile:
@@ -82,29 +97,53 @@ def handle_connection(conn, keywords, blocked_urls, allowed_ips):
 
         print(f"[INFO] Requête URL : {url}")
 
-        # Vérifier si l'IP est autorisée (accès sans restriction)
+        # Create the base log entry
+        log_entry = {
+            "timestamp": timestamp,
+            "source_ip": client_ip,
+            "destination": url,
+            "status": "",
+            "reason": "",
+            "action": ""
+        }
+
+        # Check if the IP is allowed (accès sans restriction)
         if client_ip in allowed_ips:
             print(f"[AUTORISÉ] IP autorisée : {client_ip}")
             response = requests.get(url)
             conn.sendall(b"HTTP/1.1 200 OK\r\n\r\n" + response.content)
+            log_entry["status"] = "allowed"
+            log_entry["action"] = "Content transmitted"
+            log_to_mongo(log_entry)
             return
 
-        # Vérifier les URLs bloquées
+        # Check blocked URLs
         if any(blocked_url in url for blocked_url in blocked_urls):
             print(f"[BLOQUÉ] URL interdite : {url}")
             conn.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+            log_entry["status"] = "blocked"
+            log_entry["reason"] = "Blocked URL"
+            log_entry["action"] = "Connection blocked"
+            log_to_mongo(log_entry)
             return
 
-        # Vérifier les mots-clés
+        # Check keywords
         if check_for_keywords(url, keywords):
             print(f"[BLOQUÉ] Contenu bloqué : {url}")
             conn.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+            log_entry["status"] = "blocked"
+            log_entry["reason"] = "Keyword detected"
+            log_entry["action"] = "Connection blocked"
+            log_to_mongo(log_entry)
             return
 
         # Si tout est autorisé, transmettre le contenu de la page
         print(f"[AUTORISÉ] Accès autorisé à : {url}")
         response = requests.get(url)
         conn.sendall(b"HTTP/1.1 200 OK\r\n\r\n" + response.content)
+        log_entry["status"] = "allowed"
+        log_entry["action"] = "Content transmitted"
+        log_to_mongo(log_entry)
 
     except Exception as e:
         print(f"[ERREUR] Problème lors du traitement : {e}")
